@@ -1,0 +1,117 @@
+{
+  "prompts": {
+    "promptA": {
+      "id": "promptA",
+      "label": "简化改写",
+      "description": "以第三人称视角简化小说章节，保持主线不变",
+      "file_path": "./prompts/promptA.txt",
+      "version": "1.0",
+      "created_at": "2024-01-15",
+      "last_modified": "2024-01-15",
+      "tags": [
+        "simplify",
+        "novel",
+        "third-person"
+      ],
+      "category": "rewrite",
+      "usage_count": 2,
+      "params": {
+        "content": {
+          "type": "string",
+          "required": true,
+          "description": "待改写的原文内容"
+        }
+      },
+      "output_format": {
+        "type": "novel",
+        "line_break": "per_sentence",
+        "no_explanations": true
+      },
+      "last_used": "2025-12-30T03:50:01.766Z"
+    },
+    "promptB": {
+      "id": "promptB",
+      "label": "原文改写",
+      "description": "逐句改写原文，使用现代言情小说风格，保持高原创度",
+      "file_path": "./prompts/promptB.txt",
+      "version": "1.0",
+      "created_at": "2024-01-15",
+      "last_modified": "2024-01-15",
+      "tags": [
+        "rewrite",
+        "romance",
+        "modern"
+      ],
+      "category": "rewrite",
+      "usage_count": 0,
+      "params": {
+        "content": {
+          "type": "string",
+          "required": true,
+          "description": "待改写的原文内容"
+        }
+      },
+      "output_format": {
+        "type": "novel",
+        "line_break": "per_sentence",
+        "no_explanations": true
+      }
+    },
+    "promptC": {
+      "id": "promptC",
+      "label": "原文改写-保留字数不变",
+      "description": "逐句改写原文并确保字数不减少，特别优化对话表达",
+      "file_path": "./prompts/promptC.txt",
+      "version": "1.0",
+      "created_at": "2024-01-15",
+      "last_modified": "2024-01-15",
+      "tags": [
+        "rewrite",
+        "keep-length",
+        "dialogue-enhance"
+      ],
+      "category": "rewrite",
+      "usage_count": 0,
+      "params": {
+        "content": {
+          "type": "string",
+          "required": true,
+          "description": "待改写的原文内容"
+        }
+      },
+      "output_format": {
+        "type": "novel",
+        "line_break": "per_sentence",
+        "no_explanations": true
+      }
+    }
+  },
+  "default_prompt": "promptB",
+  "settings": {
+    "encoding": "utf-8",
+    "auto_reload": false,
+    "cache_prompts": true,
+    "prompts_dir": "./prompts/",
+    "backup_enabled": true
+  },
+  "ui_config": {
+    "categories": [
+      {
+        "name": "改写类",
+        "description": "各种文本改写功能",
+        "prompts": [
+          "promptA",
+          "promptB",
+          "promptC"
+        ],
+        "icon": "✏️",
+        "color": "blue"
+      }
+    ],
+    "display_order": [
+      "promptB",
+      "promptC",
+      "promptA"
+    ]
+  }
+}

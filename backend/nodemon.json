@@ -1,0 +1,5 @@
+{
+    "watch": ["index.js", "silicon.js", "llm_client.js", "env.js", "prompts.json", "models.json", ".env"],
+    "ext": "js,json",
+    "ignore": ["uploads/*"]
+}

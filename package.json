@@ -1,0 +1,14 @@
+{
+  "name": "ai-txt",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n FRONTEND,BACKEND -c blue,green \"npm --prefix frontend start\" \"npm --prefix backend run dev\"",
+    "start": "concurrently -n FRONTEND,BACKEND -c blue,green \"npm --prefix frontend start\" \"npm --prefix backend start\"",
+    "dev:frontend": "npm --prefix frontend start",
+    "dev:backend": "npm --prefix backend run dev",
+    "install:all": "npm --prefix frontend install && npm --prefix backend install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

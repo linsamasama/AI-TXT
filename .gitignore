@@ -1,0 +1,7 @@
+.env
+.env.local
+backend/.env
+backend/.env.local
+node_modules/
+logs/
+uploads/

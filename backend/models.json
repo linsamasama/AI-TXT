@@ -1,0 +1,33 @@
+[
+  {
+    "id": "deepseek-ai/DeepSeek-V3.2-Exp",
+    "label": "DeepSeek V3.2 Exp",
+    "description": "DeepSeek最新实验版，综合推理、代码、文本处理能力较强，适合高要求场景。2.0/M tokens"
+  },
+  {
+    "id": "deepseek-ai/DeepSeek-R1",
+    "label": "DeepSeek R1",
+    "description": "DeepSeek早期主力模型，文本理解和生成能力优秀，适用于通用改写和润色。4.0/M tokens"
+  },
+  {
+    "id": "Qwen/Qwen3-32B",
+    "label": "Qwen3-32B",
+    "description": "Qwen3 32B中型模型，成本适中，性能均衡，适合日常文本处理和改写任务。1.0/M tokens"
+  },
+  {
+    "id": "Qwen/Qwen3-14B",
+    "label": "Qwen3-14B",
+    "description": "Qwen3 14B轻量模型，响应速度快，适合批量处理和轻度改写场景。0.5/M tokens"
+  },
+  {
+    "id": "Qwen/Qwen2.5-72B-Instruct-128K",
+    "label": "Qwen2.5-72B-Instruct-128K",
+    "description": "Qwen2.5 72B长文本指令版，支持超长上下文输入，适用于长文稿处理。4.13/M tokens"
+  },
+  {
+    "id": "glm-4.7-flash",
+    "label": "智谱 GLM-4.7-Flash",
+    "provider": "zhipu",
+    "description": "智谱免费模型，支持流式输出与长上下文，适合文本改写、创作和通用对话；使用前需配置 ZHIPU_API_KEY。"
+  }
+]
