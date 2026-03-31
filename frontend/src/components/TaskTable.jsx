@@ -129,20 +129,20 @@ export default function TaskTable({
     {
       title: "项目",
       dataIndex: "projectName",
-      width: 40,
+      width: 25,
       ellipsis: true,
       render: value => value || "--"
     },
     {
       title: "模型",
       dataIndex: "model",
-      width: 40,
+      width: 30,
       ellipsis: true,
       render: value => value || "--"
     },
     {
       title: "提示词",
-      width: 60,
+      width: 30,
       render: (_, row) => {
         if (row.promptType === "custom") {
           return row.promptContent ? `${row.promptContent.slice(0, 18)}...` : "--";
@@ -180,7 +180,7 @@ export default function TaskTable({
     {
       title: "失败原因",
       dataIndex: "errorMessage",
-      width: 60,
+      width: 10,
       ellipsis: true,
       render: (_, row) => (row.status === 3 ? row.errorMessage || "--" : "--")
     },
@@ -202,7 +202,7 @@ export default function TaskTable({
     },
     {
       title: "字数",
-      width: 30,
+      width: 20,
       sorter: (a, b) => (a.result || "").length - (b.result || "").length,
       sortDirections: ["ascend", "descend"],
       render: (_, row) => {
@@ -214,13 +214,13 @@ export default function TaskTable({
     {
       title: "操作",
       key: "action",
-      width: 50,
+      width: 25,
       // fixed: "right",
       render: (_, row) => {
         const processing = row.status === 2;
         return (
           <>
-            <Button
+            {/* <Button
               size="small"
               onClick={() =>
                 onConfigAI([row.id], {
@@ -233,7 +233,7 @@ export default function TaskTable({
               disabled={processing}
             >
               AI配置
-            </Button>
+            </Button> */}
             {/* <Button
               size="small"
               style={{ marginLeft: 4 }}

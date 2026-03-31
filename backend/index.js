@@ -460,7 +460,7 @@ app.post('/prompts', (req, res) => {
 });
 
 app.post('/tasks/download', (req, res) => {
-  const { ids } = req.body;
+  const { ids, zipFileName } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).send('No tasks for download');
   }
@@ -488,8 +488,19 @@ app.post('/tasks/download', (req, res) => {
     }
   });
   zip.generateAsync({ type: 'nodebuffer' }).then(data => {
+    const downloadName =
+      typeof zipFileName === 'string' && zipFileName.trim()
+        ? zipFileName.trim()
+        : 'results.zip';
+    const normalizedZipFileName = downloadName.toLowerCase().endsWith('.zip')
+      ? downloadName
+      : `${downloadName}.zip`;
+    const safeZipFileName = encodeURIComponent(normalizedZipFileName)
+      .replace(/['()]/g, escape)
+      .replace(/\*/g, '%2A');
+
     res.set('Content-Type', 'application/zip');
-    res.set('Content-Disposition', 'attachment; filename="results.zip"');
+    res.set('Content-Disposition', `attachment; filename="${safeZipFileName}"`);
     res.send(data);
   });
 });

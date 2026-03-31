@@ -39,8 +39,12 @@ export async function startTasks(params) {
   const res = await axios.post(`${BASE}/tasks/start`, params);
   return res.data;
 }
-export async function downloadTasks(ids) {
-  return await axios.post(`${BASE}/tasks/download`, { ids }, { responseType: 'blob' });
+export async function downloadTasks(ids, zipFileName) {
+  return await axios.post(
+    `${BASE}/tasks/download`,
+    { ids, zipFileName },
+    { responseType: 'blob' }
+  );
 }
 export async function deleteTasks(ids) {
   const res = await axios.post(`${BASE}/tasks/delete`, { ids });

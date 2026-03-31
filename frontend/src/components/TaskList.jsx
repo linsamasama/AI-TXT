@@ -82,6 +82,25 @@ export default function TaskList() {
   const displayedTasks =
     statusTab === "ALL" ? tasks : tasks.filter(task => task.status === Number(statusTab));
 
+  const sanitizeFileName = value =>
+    String(value || "")
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, "_");
+
+  const buildBatchZipFileName = ids => {
+    const currentProject = projects.find(project => project.id === projectIdFilter);
+    const selectedTasks = tasks.filter(task => ids.includes(task.id));
+    const selectedProjectNames = Array.from(
+      new Set(selectedTasks.map(task => task.projectName).filter(Boolean))
+    );
+
+    const projectName =
+      currentProject?.name ||
+      (selectedProjectNames.length === 1 ? selectedProjectNames[0] : "全部项目");
+
+    return `${sanitizeFileName(projectName)}_${ids.length}个文件.zip`;
+  };
+
   const handleUpload = async (files, projectPayload) => {
     const list = await uploadFiles(files, projectPayload);
     await Promise.all([loadProjectsAndTypes(), loadTaskList()]);
@@ -207,7 +226,8 @@ export default function TaskList() {
       return;
     }
 
-    const { data, headers } = await downloadTasks(ids);
+    const zipFileName = ids.length > 1 ? buildBatchZipFileName(ids) : undefined;
+    const { data, headers } = await downloadTasks(ids, zipFileName);
     const disposition = headers["content-disposition"] || "";
     let fileName = decodeURIComponent((disposition.match(/filename="?([^"]+)"?/) || [])[1] || "result.txt");
 
@@ -224,9 +244,7 @@ export default function TaskList() {
       (headers["content-type"] && headers["content-type"].includes("zip"))
     ) {
       fileType = "application/zip";
-      if (!fileName.toLowerCase().endsWith(".zip")) {
-        fileName = "results.zip";
-      }
+      fileName = zipFileName || (fileName.toLowerCase().endsWith(".zip") ? fileName : "results.zip");
     }
 
     const url = window.URL.createObjectURL(new Blob([data], { type: fileType }));
