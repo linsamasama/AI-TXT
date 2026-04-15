@@ -6,7 +6,9 @@
     "start": "concurrently -n FRONTEND,BACKEND -c blue,green \"npm --prefix frontend start\" \"npm --prefix backend start\"",
     "dev:frontend": "npm --prefix frontend start",
     "dev:backend": "npm --prefix backend run dev",
-    "install:all": "npm --prefix frontend install && npm --prefix backend install"
+    "install:all": "npm --prefix frontend install && npm --prefix backend install",
+    "migrate:data": "node scripts/migrate-data-layout.js",
+    "migrate:task-content": "node scripts/migrate-task-content.js"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Button, Drawer, Input, message, Progress, Table, Tag, Tooltip } from "antd";
-import { getOriginalById, overwriteOriginal } from "../api";
+import { getOriginalById, getResultById, overwriteOriginal } from "../api";
 
 export default function TaskTable({
   tasks,
@@ -16,6 +16,29 @@ export default function TaskTable({
   const [editedResult, setEditedResult] = useState("");
   const [savingPreview, setSavingPreview] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
+
+  const matchFileNameFilter = (filterValue, fileName) => {
+    const keyword = String(filterValue || "").trim();
+    const target = String(fileName || "");
+    if (!keyword) {
+      return true;
+    }
+
+    const rangeMatch = keyword.match(/^\[\s*(\d+)\s*-\s*(\d+)\s*\]$/);
+    if (rangeMatch) {
+      const start = Number(rangeMatch[1]);
+      const end = Number(rangeMatch[2]);
+      const min = Math.min(start, end);
+      const max = Math.max(start, end);
+      const numericParts = target.match(/\d+/g) || [];
+      return numericParts.some(part => {
+        const value = Number(part);
+        return Number.isFinite(value) && value >= min && value <= max;
+      });
+    }
+
+    return target.toLowerCase().includes(keyword.toLowerCase());
+  };
 
   const promptLabelMap = useMemo(() => {
     const map = {};
@@ -34,28 +57,21 @@ export default function TaskTable({
 
   const openPreview = async row => {
     try {
-      const rawOriginal = await getOriginalById(row.id);
-      const originalContent =
-        typeof rawOriginal === "string" ? rawOriginal : rawOriginal?.content || row.originalContent || "";
+      const [rawOriginal, rawResult] = await Promise.all([
+        getOriginalById(row.id),
+        getResultById(row.id)
+      ]);
+      const originalContent = typeof rawOriginal === "string" ? rawOriginal : rawOriginal?.content || "";
+      const resultContent = typeof rawResult === "string" ? rawResult : rawResult?.content || "";
 
       setPreviewTask({
         ...row,
         originalContent,
-        result: row.result || ""
+        result: resultContent
       });
-      setEditedResult(row.result || "");
+      setEditedResult(resultContent);
     } catch (error) {
-      if (row.originalContent) {
-        setPreviewTask({
-          ...row,
-          originalContent: row.originalContent,
-          result: row.result || ""
-        });
-        setEditedResult(row.result || "");
-        messageApi.warning("原文文件缺失，已使用任务缓存内容");
-        return;
-      }
-      messageApi.error(error?.response?.data?.error || "加载原文失败");
+      messageApi.error(error?.response?.data?.error || "Load failed");
     }
   };
 
@@ -69,7 +85,7 @@ export default function TaskTable({
       await overwriteOriginal(previewTask.id, editedResult);
       setTasks(current =>
         current.map(task =>
-          task.id === previewTask.id ? { ...task, result: editedResult } : task
+          task.id === previewTask.id ? { ...task, resultLength: editedResult.length } : task
         )
       );
       setPreviewTask(current => (current ? { ...current, result: editedResult } : current));
@@ -107,7 +123,7 @@ export default function TaskTable({
       filterDropdown: ({ setSelectedKeys, selectedKeys, confirm, clearFilters }) => (
         <div style={{ padding: 8 }}>
           <Input
-            placeholder="按文件名过滤"
+            placeholder="按文件名过滤（支持 [100-200] 区间）"
             value={selectedKeys[0] || ""}
             onChange={event => setSelectedKeys(event.target.value ? [event.target.value] : [])}
             onPressEnter={() => confirm()}
@@ -123,8 +139,7 @@ export default function TaskTable({
           </div>
         </div>
       ),
-      onFilter: (value, record) =>
-        (record.fileName || "").toLowerCase().includes(String(value || "").toLowerCase())
+      onFilter: (value, record) => matchFileNameFilter(value, record.fileName)
     },
     {
       title: "项目",
@@ -203,11 +218,11 @@ export default function TaskTable({
     {
       title: "字数",
       width: 20,
-      sorter: (a, b) => (a.result || "").length - (b.result || "").length,
+      sorter: (a, b) => (a.resultLength || 0) - (b.resultLength || 0),
       sortDirections: ["ascend", "descend"],
       render: (_, row) => {
-        const originalLength = (row.originalContent || "").length;
-        const resultLength = (row.result || "").length;
+        const originalLength = row.originalLength || 0;
+        const resultLength = row.resultLength || 0;
         return resultLength ? `${originalLength} -> ${resultLength}` : originalLength;
       }
     },

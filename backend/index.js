@@ -5,14 +5,30 @@ const fs = require('fs');
 const path = require('path');
 require('./env');
 const silicon = require('./silicon');
-const prompts = require('./prompts.json');
 const models = require('./models.json');
+const {
+  buildTasksSnapshot,
+  createJsonWriteQueue,
+  deleteTaskContent,
+  ensureDirSync,
+  getTaskContentPath,
+  hasInlineOriginalContent,
+  hasInlineResult,
+  hasLegacyTaskContent,
+  hydrateTask,
+  normalizeTaskMetadata,
+  readTaskContent,
+  writeTaskContent
+} = require('./task_storage');
 
-const TASKS_FILE = path.join(__dirname, 'tasks.json');
-const PROJECTS_FILE = path.join(__dirname, 'projects.json');
-const PROMPTS_FILE = path.join(__dirname, 'prompts.json');
-const STORIES_FILE = path.join(__dirname, 'stories.json');
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const DATA_DIR = path.join(__dirname, 'data');
+const STORAGE_DIR = path.join(__dirname, 'storage');
+const UPLOAD_DIR = path.join(STORAGE_DIR, 'uploads');
+const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
+const TASK_CONTENT_DIR = path.join(DATA_DIR, 'task-content');
+const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json');
+const PROMPTS_FILE = path.join(DATA_DIR, 'prompts.json');
+const STORIES_FILE = path.join(DATA_DIR, 'stories.json');
 
 const LEGACY_PROJECT_NAME = '历史任务';
 
@@ -31,20 +47,54 @@ function saveJsonFile(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
-let tasks = loadJsonFile(TASKS_FILE, []);
+ensureDirSync(DATA_DIR);
+ensureDirSync(UPLOAD_DIR);
+ensureDirSync(TASK_CONTENT_DIR);
+
+let tasks = loadJsonFile(TASKS_FILE, []).map(hydrateTask);
 let projects = loadJsonFile(PROJECTS_FILE, []);
+let prompts = loadJsonFile(PROMPTS_FILE, []);
 let stories = loadJsonFile(STORIES_FILE, []);
 
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+const tasksWriteQueue = createJsonWriteQueue(TASKS_FILE, () => buildTasksSnapshot(tasks));
 
-function saveTasks() {
-  saveJsonFile(TASKS_FILE, tasks);
+async function saveTasks() {
+  await tasksWriteQueue.save();
 }
 
 function saveProjects() {
   saveJsonFile(PROJECTS_FILE, projects);
+}
+
+async function loadTaskResult(task) {
+  const contentFilePath = getTaskContentPath(TASK_CONTENT_DIR, task.id);
+  const taskContent = await readTaskContent(TASK_CONTENT_DIR, task.id);
+
+  if (taskContent && typeof taskContent.result === 'string') {
+    return taskContent.result;
+  }
+
+  if (hasInlineResult(task)) {
+    return task.result;
+  }
+
+  const error = new Error(`任务结果文件缺失: ${contentFilePath}`);
+  error.statusCode = 500;
+  error.code = 'TASK_RESULT_MISSING';
+  throw error;
+}
+
+async function readTaskResultForResponse(task, options = {}) {
+  const { allowEmpty = false } = options;
+
+  try {
+    return await loadTaskResult(task);
+  } catch (error) {
+    if (allowEmpty && error.code === 'TASK_RESULT_MISSING') {
+      return '';
+    }
+    throw error;
+  }
 }
 
 function createId(prefix) {
@@ -126,9 +176,10 @@ function resolveUploadPath(rawFilePath) {
 
 function withProjectInfo(task) {
   const project = getProjectById(task.projectId);
+  const responseTask = normalizeTaskMetadata(task);
   return {
-    ...task,
-    projectType: task.projectType || project?.type || '',
+    ...responseTask,
+    projectType: responseTask.projectType || project?.type || '',
     projectName: project?.name || ''
   };
 }
@@ -181,8 +232,17 @@ function ensureLegacyProjectAndMigrateTasks() {
     saveProjects();
   }
   if (changedTasks) {
-    saveTasks();
+    void saveTasks().catch(error => {
+      console.error('保存任务元数据失败:', error.message);
+    });
   }
+}
+
+const legacyTaskCount = tasks.filter(hasLegacyTaskContent).length;
+if (legacyTaskCount > 0) {
+  console.warn(
+    `[tasks] 检测到 ${legacyTaskCount} 条旧格式任务（内联 result/originalContent），请执行 npm run migrate:task-content`
+  );
 }
 
 ensureLegacyProjectAndMigrateTasks();
@@ -248,7 +308,7 @@ app.put('/projects/:id', (req, res) => {
   });
 });
 
-app.delete('/projects/:id', (req, res) => {
+app.delete('/projects/:id', async (req, res) => {
   const { id } = req.params;
   const { targetProjectId } = req.body || {};
 
@@ -283,7 +343,7 @@ app.delete('/projects/:id', (req, res) => {
         projectType: targetProject.type
       };
     });
-    saveTasks();
+    await saveTasks();
   }
 
   projects = projects.filter(item => item.id !== id);
@@ -328,7 +388,7 @@ function resolveUploadProject(body) {
 }
 
 // 批量上传并创建任务（必须绑定项目）
-app.post('/tasks/upload', upload.array('files'), (req, res) => {
+app.post('/tasks/upload', upload.array('files'), async (req, res) => {
   if (!Array.isArray(req.files) || req.files.length === 0) {
     return res.status(400).json({ error: '请至少上传一个 txt 文件' });
   }
@@ -340,27 +400,36 @@ app.post('/tasks/upload', upload.array('files'), (req, res) => {
     return res.status(error.statusCode || 500).json({ error: error.message || '绑定项目失败' });
   }
 
-  const newTasks = req.files.map((file, index) => ({
-    id: `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
-    fileName: Buffer.from(file.originalname, 'latin1').toString('utf8'),
-    filePath: file.filename,
-    originalContent: fs.readFileSync(file.path, 'utf8'),
-    status: 0,
-    model: '',
-    promptType: 'preset',
-    promptKey: '',
-    promptContent: '',
-    result: '',
-    errorMessage: '',
-    providerTraceId: '',
-    providerFinishReason: '',
-    processTime: '',
-    projectId: selectedProject.id,
-    projectType: selectedProject.type || ''
-  }));
+  const newTasks = req.files.map((file, index) => {
+    const originalContent = fs.readFileSync(file.path, 'utf8');
+
+    return {
+      id: `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+      fileName: Buffer.from(file.originalname, 'latin1').toString('utf8'),
+      filePath: file.filename,
+      status: 0,
+      model: '',
+      promptType: 'preset',
+      promptKey: '',
+      promptContent: '',
+      errorMessage: '',
+      providerTraceId: '',
+      providerFinishReason: '',
+      processTime: '',
+      projectId: selectedProject.id,
+      projectType: selectedProject.type || '',
+      startedAt: null,
+      endTime: null,
+      attemptCount: 0,
+      lastErrorType: '',
+      providerStatus: null,
+      originalLength: originalContent.length,
+      resultLength: 0
+    };
+  });
 
   tasks = [...newTasks, ...tasks];
-  saveTasks();
+  await saveTasks();
   res.json({ tasks: newTasks.map(withProjectInfo) });
 });
 
@@ -375,14 +444,14 @@ app.get('/tasks', (req, res) => {
   res.json({ tasks: filteredTasks.map(withProjectInfo) });
 });
 
-app.post('/tasks/config', (req, res) => {
+app.post('/tasks/config', async (req, res) => {
   const { ids, model, promptType, promptKey, promptContent } = req.body;
   tasks = tasks.map(task => (
     ids.includes(task.id)
       ? { ...task, model, promptType, promptKey, promptContent }
       : task
   ));
-  saveTasks();
+  await saveTasks();
   res.json({ success: true });
 });
 
@@ -397,8 +466,17 @@ app.post('/tasks/start', async (req, res) => {
       continue;
     }
 
-    task.status = 2;
     const startTime = Date.now();
+    task.status = 2;
+    task.startedAt = startTime;
+    task.endTime = null;
+    task.processTime = '';
+    task.attemptCount = Number.isFinite(task.attemptCount) ? task.attemptCount + 1 : 1;
+    task.lastErrorType = '';
+    task.providerStatus = null;
+    task.errorMessage = '';
+    task.providerTraceId = '';
+    task.providerFinishReason = '';
     let fileContent = '';
     const usePrompt = task.promptType === 'preset'
       ? prompts.find(prompt => prompt.key === task.promptKey)?.content || ''
@@ -407,21 +485,24 @@ app.post('/tasks/start', async (req, res) => {
     try {
       const resolvedPath = resolveUploadPath(task.filePath);
       fileContent = fs.readFileSync(resolvedPath, 'utf-8');
+      task.originalLength = fileContent.length;
       const rewriteResult = await silicon.rewriteWithSilicon(fileContent, usePrompt, task.model);
+      await writeTaskContent(TASK_CONTENT_DIR, task.id, rewriteResult.content);
       task.status = 1;
-      task.result = rewriteResult.content;
-      task.originalContent = fileContent;
+      if (hasInlineResult(task)) {
+        task.result = rewriteResult.content;
+      }
       task.errorMessage = '';
       task.providerTraceId = rewriteResult.traceId || '';
       task.providerFinishReason = rewriteResult.finishReason || '';
+      task.resultLength = rewriteResult.content.length;
     } catch (error) {
       task.status = 3;
-      if (fileContent) {
-        task.originalContent = fileContent;
-      }
       task.errorMessage = error.message || '处理失败';
       task.providerTraceId = error.providerTraceId || '';
       task.providerFinishReason = error.providerFinishReason || '';
+      task.lastErrorType = error.code || error.name || 'UNKNOWN';
+      task.providerStatus = error.providerStatus ?? null;
       console.log(error);
     }
 
@@ -435,7 +516,7 @@ app.post('/tasks/start', async (req, res) => {
       processTime: task.processTime,
       errorMessage: task.errorMessage || ''
     });
-    saveTasks();
+    await saveTasks();
     console.log(task.fileName, '处理完毕');
   }
 
@@ -459,7 +540,27 @@ app.post('/prompts', (req, res) => {
   res.json({ prompts });
 });
 
-app.post('/tasks/download', (req, res) => {
+app.get('/tasks/result', async (req, res) => {
+  const { id } = req.query;
+  if (!id) {
+    return res.status(400).json({ error: 'Task ID is required' });
+  }
+
+  const task = tasks.find(item => String(item.id) === String(id));
+  if (!task) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  try {
+    const content = await readTaskResultForResponse(task);
+    res.json({ id: task.id, content });
+  } catch (error) {
+    console.error('[tasks/result] Failed to read task result:', task.id, getTaskContentPath(TASK_CONTENT_DIR, task.id), error.message);
+    res.status(error.statusCode || 500).json({ error: 'Failed to read task result', detail: error.message });
+  }
+});
+
+app.post('/tasks/download', async (req, res) => {
   const { ids, zipFileName } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).send('No tasks for download');
@@ -471,23 +572,35 @@ app.post('/tasks/download', (req, res) => {
       return res.status(404).send('Task not found');
     }
 
-    const fileName = task.fileName || 'result.txt';
-    const safeFileName = encodeURIComponent(fileName).replace(/['()]/g, escape).replace(/\*/g, '%2A');
-    res.set('Content-Disposition', `attachment; filename="${safeFileName}"`);
-    res.set('Content-Type', 'text/plain');
-    res.send((task.result || '').replace(/——/g, '，'));
-    return;
+    try {
+      const resultContent = await readTaskResultForResponse(task);
+      const fileName = task.fileName || 'result.txt';
+      const safeFileName = encodeURIComponent(fileName).replace(/[\'()]/g, escape).replace(/\*/g, '%2A');
+      res.set('Content-Disposition', `attachment; filename="${safeFileName}"`);
+      res.set('Content-Type', 'text/plain');
+      res.send(resultContent.replace(/\u2014\u2014/g, '\uFF0C'));
+      return;
+    } catch (error) {
+      console.error('[tasks/download] Missing task result:', task.id, getTaskContentPath(TASK_CONTENT_DIR, task.id), error.message);
+      return res.status(error.statusCode || 500).json({ error: 'Download failed', detail: error.message });
+    }
   }
 
-  const JSZip = require('jszip');
-  const zip = new JSZip();
-  ids.forEach(id => {
-    const task = tasks.find(item => item.id === id);
-    if (task) {
-      zip.file(task.fileName || `${id}.txt`, (task.result || '').replace(/——/g, '，'));
+  try {
+    const JSZip = require('jszip');
+    const zip = new JSZip();
+
+    for (const id of ids) {
+      const task = tasks.find(item => item.id === id);
+      if (!task) {
+        continue;
+      }
+
+      const resultContent = await readTaskResultForResponse(task);
+      zip.file(task.fileName || `${id}.txt`, resultContent.replace(/\u2014\u2014/g, '\uFF0C'));
     }
-  });
-  zip.generateAsync({ type: 'nodebuffer' }).then(data => {
+
+    const data = await zip.generateAsync({ type: 'nodebuffer' });
     const downloadName =
       typeof zipFileName === 'string' && zipFileName.trim()
         ? zipFileName.trim()
@@ -496,67 +609,90 @@ app.post('/tasks/download', (req, res) => {
       ? downloadName
       : `${downloadName}.zip`;
     const safeZipFileName = encodeURIComponent(normalizedZipFileName)
-      .replace(/['()]/g, escape)
+      .replace(/[\'()]/g, escape)
       .replace(/\*/g, '%2A');
 
     res.set('Content-Type', 'application/zip');
     res.set('Content-Disposition', `attachment; filename="${safeZipFileName}"`);
     res.send(data);
-  });
+  } catch (error) {
+    console.error('[tasks/download] Batch download failed:', error.message);
+    res.status(error.statusCode || 500).json({ error: 'Batch download failed', detail: error.message });
+  }
 });
 
-app.post('/tasks/delete', (req, res) => {
+app.post('/tasks/delete', async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ error: '缺少任务ID' });
+    return res.status(400).json({ error: 'Task IDs are required' });
   }
 
   const deletingTasks = tasks.filter(task => ids.includes(task.id));
   tasks = tasks.filter(task => !ids.includes(task.id));
-  saveTasks();
-  res.json({ tasks: tasks.map(withProjectInfo) });
 
-  deletingTasks.forEach(task => {
-    const filePath = resolveUploadPath(task.filePath);
-    if (filePath && fs.existsSync(filePath)) {
+  try {
+    await saveTasks();
+
+    for (const task of deletingTasks) {
+      const filePath = resolveUploadPath(task.filePath);
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (error) {
+          console.warn('Failed to delete upload file:', task.filePath, error.message);
+        }
+      }
+
       try {
-        fs.unlinkSync(filePath);
+        await deleteTaskContent(TASK_CONTENT_DIR, task.id);
       } catch (error) {
-        console.warn('删除文件失败:', task.filePath, error.message);
+        console.warn('Failed to delete task content file:', task.id, error.message);
       }
     }
-  });
+
+    res.json({ tasks: tasks.map(withProjectInfo) });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete tasks', detail: error.message });
+  }
 });
 
-app.post('/tasks/overwrite-original', (req, res) => {
+app.post('/tasks/overwrite-original', async (req, res) => {
   const { id, content } = req.body;
   if (!id || typeof content !== 'string') {
-    return res.status(400).json({ error: '缺少 id 或 content' });
+    return res.status(400).json({ error: 'Missing id or content' });
   }
 
   const task = tasks.find(item => item.id === id);
   if (!task) {
-    return res.status(404).json({ error: '未找到对应任务' });
+    return res.status(404).json({ error: 'Task not found' });
   }
 
   try {
-    task.result = content;
-    saveTasks();
+    await writeTaskContent(TASK_CONTENT_DIR, task.id, content);
+    if (hasInlineResult(task)) {
+      task.result = content;
+    }
+    task.resultLength = content.length;
+    task.status = 1;
+    task.errorMessage = '';
+    task.lastErrorType = '';
+    task.endTime = Date.now();
+    await saveTasks();
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: '写入失败', detail: error.message });
+    res.status(500).json({ error: 'Write failed', detail: error.message });
   }
 });
 
 app.get('/tasks/original', (req, res) => {
   const { id } = req.query;
   if (!id) {
-    return res.status(400).json({ error: '任务ID不能为空' });
+    return res.status(400).json({ error: 'Task ID is required' });
   }
 
   const task = tasks.find(item => String(item.id) === String(id));
   if (!task) {
-    return res.status(404).json({ error: '未找到对应任务' });
+    return res.status(404).json({ error: 'Task not found' });
   }
 
   const filePath = resolveUploadPath(task.filePath);
@@ -564,20 +700,19 @@ app.get('/tasks/original', (req, res) => {
     let data = '';
     if (filePath && fs.existsSync(filePath)) {
       data = fs.readFileSync(filePath, 'utf8');
-    } else if (typeof task.originalContent === 'string') {
+    } else if (hasInlineOriginalContent(task)) {
       data = task.originalContent;
     } else {
-      return res.status(404).json({ error: '原始文件不存在' });
+      return res.status(404).json({ error: 'Original file not found' });
     }
 
     res.set('Content-Type', 'text/plain; charset=utf-8');
     res.send(data);
   } catch (error) {
-    res.status(500).json({ error: '读取文件失败', detail: error.message });
+    res.status(500).json({ error: 'Failed to read file', detail: error.message });
   }
 });
 
-// 生成短篇小说（流式版本，支持实时进度和继续生成）
 app.post('/story/generate-stream', async (req, res) => {
   const { instruction, model, wordCount = 1000, existingContent = '' } = req.body;
   console.log('收到流式生成请求:', { 

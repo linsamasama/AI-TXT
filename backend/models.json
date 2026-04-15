@@ -1,7 +1,7 @@
 [
   {
-    "id": "deepseek-ai/DeepSeek-V3.2-Exp",
-    "label": "DeepSeek V3.2 Exp",
+    "id": "deepseek-ai/DeepSeek-V3.2",
+    "label": "DeepSeek V3.2",
     "description": "DeepSeek最新实验版，综合推理、代码、文本处理能力较强，适合高要求场景。2.0/M tokens"
   },
   {

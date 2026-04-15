@@ -81,6 +81,11 @@ export async function getOriginalById(id) {
 }
 
 // 覆盖原文（根据任务id）
+export async function getResultById(id) {
+  const res = await axios.get(`${BASE}/tasks/result`, { params: { id } });
+  return res.data; // ?? { id, content }
+}
+
 export async function overwriteOriginal(id, content) {
   const res = await axios.post(`${BASE}/tasks/overwrite-original`, { id, content });
   return res.data; // 期望 { success: true }
@@ -117,12 +122,11 @@ export async function generateStoryStream(params, onProgress, taskId) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-
+debugger
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';

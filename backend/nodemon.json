@@ -1,5 +1,11 @@
 {
-    "watch": ["index.js", "silicon.js", "llm_client.js", "env.js", "prompts.json", "models.json", ".env"],
+    "watch": ["index.js", "silicon.js", "llm_client.js", "task_storage.js", "env.js", "models.json", ".env"],
     "ext": "js,json",
-    "ignore": ["uploads/*"]
+    "ignore": [
+        "storage/uploads/*",
+        "data/tasks.json",
+        "data/stories.json",
+        "data/projects.json",
+        "data/prompts.json"
+    ]
 }
