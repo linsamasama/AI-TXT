@@ -25,31 +25,15 @@ function simpleUuid() {
 }
 
 const basicInstructionTemplates = [
-//   {
-//     key: 'women',
-//     label: '女频',
-//     themes: "" ,
-//     basicInstruction: `严格以第一人我（女性），写一个温情女频小说。
-//  1. 直接写出详细正文,控制整体剧情进度，严格要求字数在20000字。
-//  2. 不要断尾。`,
-//   },
-// {
-//     key: 'women',
-//     label: '女频',
-//     themes: "" ,
-//     basicInstruction: `严格以第三人称进行故事讲述，用白话文的口吻，写一部女频小说。
-//  1. 禁止使用‘总而言之’、‘那一刻，他明白’、‘这不仅是...更是...’这类总结性陈词。
-//  2. 直接写出详细正文,字数在$$number字。
-//  3. 剧情连贯，不要断尾。`,
-//   },
 {
     key: 'women',
     label: '女频',
     themes: "" ,
-    basicInstruction: `你是一个冷峻的硬汉派作家，拒绝一切无意义的情感呻吟和环境铺陈。严格以第三人称进行故事讲述，用白话文的口吻，写一个温情女频小说。
- 1. 直接写出详细正文,字数在$$number字。
- 2. 剧情连贯，不要断尾。
- 3. 请在每个章节结尾采用“戛然而止”的处理方式。最后一句话必须是角色的某个具体动作或一句关键对话，严禁出现超过20字的环境渲染或心理感悟。`,
+    basicInstruction: `你是一个女频言情小说家。严格以第三人称我进行故事讲述，用白话文的口吻，写一个温情女频小说。
+ 1. 白话文风格，直接写出详细正文,字数在$$number字。
+ 2. 开头严禁出现环境渲染或心理活动描述。
+ 3. 严禁出现超过10个字的环境渲染或心理活动描述。
+ 4. 严禁出现啰嗦的剧情无关的内容`,
   },
   {
     key: 'man',
@@ -63,7 +47,7 @@ const basicInstructionTemplates = [
 ];
 
 
-const maxConcurrency = 2; // 并发数
+const maxConcurrency = 1; // 并发数
 const storyType= localStorage.getItem('storyType') || "women"
 
 const TARGET_WORD_COUNT_OPTIONS = [
@@ -507,7 +491,8 @@ export default function StoryGenerator() {
     try {
       await generateStoryStream(
         {
-          instruction: fullInstruction,
+          // instruction: fullInstruction,
+          instruction: theme,
           model,
           wordCount,
           existingContent,
@@ -709,7 +694,7 @@ export default function StoryGenerator() {
         const safeTheme = (story.theme || `小说_${index + 1}`).replace(/[\\/:*?"<>|]/g, '_');
         let content = `主题：${story.theme}\n\n`;
         content += story.content || '';
-        zip.file(`${safeTheme}.txt`, content);
+        zip.file(`${safeTheme}.txt`, content.replace(/——/g,'，'));
       });
 
       // 生成压缩包
@@ -918,7 +903,7 @@ export default function StoryGenerator() {
                         style={{ resize: 'vertical' }}
                       />
                     </div>
-                    <div>
+                    {/* <div >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                         <label style={{ fontWeight: 500 }}>
                           基本指令：
@@ -961,7 +946,7 @@ export default function StoryGenerator() {
                           {item.basicInstruction.replace('$$number', wordCount)}
                         </div>
                       )}
-                    </div>
+                    </div> */}
                   </Card>
                 ))}
               </Space>
@@ -1493,7 +1478,7 @@ export default function StoryGenerator() {
                               return;
                             }
                             const safeTheme = (story.theme || '小说').replace(/[\\/:*?"<>|]/g, '_');
-                            let content = `主题：${story.theme}\n\n` + story.content;
+                            let content = `主题：${story.theme}\n\n` + story.content.replace(/——/g,'，');
                             const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement("a");
