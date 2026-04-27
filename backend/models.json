@@ -1,5 +1,10 @@
 [
   {
+     "id": "deepseek-ai/DeepSeek-V4-Flash",
+    "label": "DeepSeek V4-Flash",
+    "description": "支持 1M tokens 超长上下文。适用于日常问答、复杂分析、长文本理解与代码等多类任务。2.0/M tokens"
+  },
+  {
     "id": "deepseek-ai/DeepSeek-V3.2",
     "label": "DeepSeek V3.2",
     "description": "DeepSeek最新实验版，综合推理、代码、文本处理能力较强，适合高要求场景。2.0/M tokens"
