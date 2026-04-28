@@ -29,6 +29,8 @@ const TASK_CONTENT_DIR = path.join(DATA_DIR, 'task-content');
 const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json');
 const PROMPTS_FILE = path.join(DATA_DIR, 'prompts.json');
 const STORIES_FILE = path.join(DATA_DIR, 'stories.json');
+const SPLIT_STORY_FILES_FILE = path.join(DATA_DIR, 'split-story-files.json');
+const TOP_LINES_FILES_FILE = path.join(DATA_DIR, 'top-lines-files.json');
 
 const LEGACY_PROJECT_NAME = '历史任务';
 
@@ -55,11 +57,29 @@ let tasks = loadJsonFile(TASKS_FILE, []).map(hydrateTask);
 let projects = loadJsonFile(PROJECTS_FILE, []);
 let prompts = loadJsonFile(PROMPTS_FILE, []);
 let stories = loadJsonFile(STORIES_FILE, []);
+let splitStoryFiles = loadJsonFile(SPLIT_STORY_FILES_FILE, []);
+let topLinesFiles = loadJsonFile(TOP_LINES_FILES_FILE, []);
 
 const tasksWriteQueue = createJsonWriteQueue(TASKS_FILE, () => buildTasksSnapshot(tasks));
+const splitStoryFilesWriteQueue = createJsonWriteQueue(
+  SPLIT_STORY_FILES_FILE,
+  () => splitStoryFiles
+);
+const topLinesFilesWriteQueue = createJsonWriteQueue(
+  TOP_LINES_FILES_FILE,
+  () => topLinesFiles
+);
 
 async function saveTasks() {
   await tasksWriteQueue.save();
+}
+
+async function saveSplitStoryFiles() {
+  await splitStoryFilesWriteQueue.save();
+}
+
+async function saveTopLinesFiles() {
+  await topLinesFilesWriteQueue.save();
 }
 
 function saveProjects() {
@@ -173,6 +193,363 @@ function resolveUploadPath(rawFilePath) {
 
   return path.join(UPLOAD_DIR, path.basename(rawFilePath));
 }
+
+function sanitizeFileName(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '_');
+}
+
+function decodeUploadFileName(originalname) {
+  return Buffer.from(originalname || '', 'latin1').toString('utf8');
+}
+
+function findSecondStorySplitIndex(content) {
+  const text = String(content || '');
+  if (!text) {
+    return -1;
+  }
+
+  const markers = [
+    '接下来请收听第2个故事',
+    '接下来请收听第二个故事',
+    '接下来请听第2个故事',
+    '接下来请听第二个故事',
+    '下面请收听第2个故事',
+    '下面请收听第二个故事',
+    '第2个故事',
+    '第二个故事'
+  ];
+
+  let bestIndex = -1;
+  for (const marker of markers) {
+    const index = text.indexOf(marker);
+    if (index > 0 && (bestIndex === -1 || index < bestIndex)) {
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+}
+
+function extractSecondStoryTitleSeed(content) {
+  const text = String(content || '').replace(/\r/g, '').trim();
+  if (!text) {
+    return '';
+  }
+
+  const normalized = text
+    .replace(/^(?:接下来请(?:收听|听)|下面请收听)\s*第[2二]个故事[:：，,。！？!?、\s-]*/u, '')
+    .replace(/^第[2二]个故事[:：，,。！？!?、\s-]*/u, '')
+    .trim();
+
+  const firstLine = normalized
+    .split('\n')
+    .map(item => item.trim())
+    .find(Boolean) || normalized;
+  const firstSentence = firstLine.split(/[。！？!?]/)[0].trim();
+
+  return firstSentence.replace(/\s+/g, '').slice(0, 24);
+}
+
+function buildSecondStoryLongTitle(content) {
+  const seed = extractSecondStoryTitleSeed(content);
+  if (!seed) {
+    return '第二个故事：这后半段其实是另一条完整故事线';
+  }
+  if (seed.length >= 10) {
+    return `第二个故事：${seed}`;
+  }
+  return `第二个故事：${seed}，后面的发展和前面完全不是一回事`;
+}
+
+function buildSplitStorySegments(fileContent) {
+  const content = String(fileContent || '');
+  const normalizedContent = content.trim();
+
+  if (!normalizedContent) {
+    return [
+      {
+        title: '故事1',
+        originalContent: normalizedContent
+      }
+    ];
+  }
+
+  const splitIndex = findSecondStorySplitIndex(content);
+  if (splitIndex <= 0) {
+    return [
+      {
+        title: '故事1',
+        originalContent: normalizedContent
+      }
+    ];
+  }
+
+  const firstContent = content.slice(0, splitIndex).trim();
+  const secondContent = content.slice(splitIndex).trim();
+
+  if (!firstContent || !secondContent) {
+    return [
+      {
+        title: '故事1',
+        originalContent: normalizedContent
+      }
+    ];
+  }
+
+  return [
+    {
+      title: '故事1',
+      originalContent: firstContent
+    },
+    {
+      title: buildSecondStoryLongTitle(secondContent),
+      originalContent: secondContent
+    }
+  ];
+}
+
+function createSplitSourceFile(originalFileName, storyTitle, storyIndex, originalContent) {
+  const parsed = path.parse(originalFileName || 'story.txt');
+  const safeBaseName = sanitizeFileName(parsed.name || 'story');
+  const safeStoryTitle = sanitizeFileName(storyTitle || `故事${storyIndex}`);
+  const storedFileName = `${createId('split')}.txt`;
+  const absolutePath = path.join(UPLOAD_DIR, storedFileName);
+
+  fs.writeFileSync(absolutePath, originalContent, 'utf8');
+
+  return {
+    storedFileName,
+    downloadFileName: storyIndex === 1 ? `${safeBaseName}.txt` : `${safeStoryTitle}.txt`
+  };
+}
+
+function normalizeSplitStoryFileRecord(record = {}) {
+  return {
+    id: record.id || createId('split_story'),
+    fileName: record.fileName || '',
+    filePath: record.filePath || '',
+    projectId: record.projectId || '',
+    projectType: record.projectType || '',
+    status: typeof record.status === 'number' ? record.status : 0,
+    statusText: record.statusText || '待拆分',
+    progress: Number.isFinite(record.progress) ? record.progress : 0,
+    storyCount: Number.isFinite(record.storyCount) ? record.storyCount : 0,
+    storyTitles: Array.isArray(record.storyTitles) ? record.storyTitles : [],
+    resultFileNames: Array.isArray(record.resultFileNames) ? record.resultFileNames : [],
+    analysisSummary: record.analysisSummary || '',
+    errorMessage: record.errorMessage || '',
+    resultTaskIds: Array.isArray(record.resultTaskIds) ? record.resultTaskIds : [],
+    createdAt: Number.isFinite(record.createdAt) ? record.createdAt : Date.now(),
+    updatedAt: Number.isFinite(record.updatedAt) ? record.updatedAt : Date.now(),
+    startedAt: record.startedAt ?? null,
+    endTime: record.endTime ?? null,
+    originalLength: Number.isFinite(record.originalLength) ? record.originalLength : 0
+  };
+}
+
+function withSplitStoryProjectInfo(record) {
+  const normalized = normalizeSplitStoryFileRecord(record);
+  const project = getProjectById(normalized.projectId);
+
+  return {
+    ...normalized,
+    projectName: project?.name || ''
+  };
+}
+
+function getSplitStoryFileById(id) {
+  return splitStoryFiles.find(item => item.id === id) || null;
+}
+
+async function deleteSplitStoryFilesByIds(ids = []) {
+  const deletingFiles = splitStoryFiles.filter(file => ids.includes(file.id));
+  if (!deletingFiles.length) {
+    return [];
+  }
+
+  const deletingTaskIds = new Set(
+    deletingFiles.flatMap(file => (Array.isArray(file.resultTaskIds) ? file.resultTaskIds : []))
+  );
+  const deletingTasks = tasks.filter(task => deletingTaskIds.has(task.id));
+
+  splitStoryFiles = splitStoryFiles.filter(file => !ids.includes(file.id));
+  tasks = tasks.filter(task => !deletingTaskIds.has(task.id));
+
+  await Promise.all([saveTasks(), saveSplitStoryFiles()]);
+
+  for (const fileRecord of deletingFiles) {
+    const sourcePath = resolveUploadPath(fileRecord.filePath);
+    if (sourcePath && fs.existsSync(sourcePath)) {
+      try {
+        fs.unlinkSync(sourcePath);
+      } catch (error) {
+        console.warn('Failed to delete split source file:', fileRecord.filePath, error.message);
+      }
+    }
+  }
+
+  for (const task of deletingTasks) {
+    const uploadPath = resolveUploadPath(task.filePath);
+    if (uploadPath && fs.existsSync(uploadPath)) {
+      try {
+        fs.unlinkSync(uploadPath);
+      } catch (error) {
+        console.warn('Failed to delete split result upload file:', task.filePath, error.message);
+      }
+    }
+
+    try {
+      await deleteTaskContent(TASK_CONTENT_DIR, task.id);
+    } catch (error) {
+      console.warn('Failed to delete split result task content:', task.id, error.message);
+    }
+  }
+
+  return deletingFiles;
+}
+
+function createSplitResultTasks(fileRecord, storySegments) {
+  const now = Date.now();
+
+  return storySegments.map((segment, index) => {
+    const storyIndex = index + 1;
+    const splitSourceFile = createSplitSourceFile(
+      fileRecord.fileName,
+      segment.title,
+      storyIndex,
+      segment.originalContent
+    );
+
+    return {
+      id: `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+      fileName: splitSourceFile.downloadFileName,
+      filePath: splitSourceFile.storedFileName,
+      status: 1,
+      model: '',
+      promptType: 'preset',
+      promptKey: '',
+      promptContent: '',
+      errorMessage: '',
+      providerTraceId: '',
+      providerFinishReason: '',
+      processTime: '0.00',
+      projectId: fileRecord.projectId,
+      projectType: fileRecord.projectType || '',
+      startedAt: now,
+      endTime: now,
+      attemptCount: 1,
+      lastErrorType: '',
+      providerStatus: null,
+      originalLength: segment.originalContent.length,
+      resultLength: segment.originalContent.length
+    };
+  });
+}
+
+splitStoryFiles = splitStoryFiles.map(normalizeSplitStoryFileRecord);
+
+function buildTopLinesResultFileName(originalFileName) {
+  const parsed = path.parse(originalFileName || 'result.txt');
+  const safeBaseName = sanitizeFileName(parsed.name || 'result');
+  return `${safeBaseName}_前20行.txt`;
+}
+
+function buildTopLinesContent(rawContent) {
+  const normalized = String(rawContent || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized ? normalized.split('\n') : [];
+  const extractedLines = lines.slice(0, 20);
+
+  return {
+    originalLineCount: lines.length,
+    extractedLineCount: extractedLines.length,
+    extractedContent: extractedLines.join('\n').trimEnd(),
+    previewText: extractedLines.slice(0, 3).join('\n').trim()
+  };
+}
+
+function normalizeTopLinesFileRecord(record = {}) {
+  return {
+    id: record.id || createId('top_lines'),
+    fileName: record.fileName || '',
+    filePath: record.filePath || '',
+    projectId: record.projectId || '',
+    projectType: record.projectType || '',
+    status: typeof record.status === 'number' ? record.status : 0,
+    statusText: record.statusText || '待处理',
+    resultContentId: record.resultContentId || '',
+    resultFileName: record.resultFileName || '',
+    previewText: record.previewText || '',
+    originalLineCount: Number.isFinite(record.originalLineCount) ? record.originalLineCount : 0,
+    extractedLineCount: Number.isFinite(record.extractedLineCount) ? record.extractedLineCount : 0,
+    errorMessage: record.errorMessage || '',
+    createdAt: Number.isFinite(record.createdAt) ? record.createdAt : Date.now(),
+    updatedAt: Number.isFinite(record.updatedAt) ? record.updatedAt : Date.now(),
+    originalLength: Number.isFinite(record.originalLength) ? record.originalLength : 0
+  };
+}
+
+function withTopLinesProjectInfo(record) {
+  const normalized = normalizeTopLinesFileRecord(record);
+  const project = getProjectById(normalized.projectId);
+
+  return {
+    ...normalized,
+    projectName: project?.name || ''
+  };
+}
+
+async function readTopLinesResult(record) {
+  if (!record?.resultContentId) {
+    const error = new Error('截取结果不存在');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const content = await readTaskContent(TASK_CONTENT_DIR, record.resultContentId);
+  if (!content || typeof content.result !== 'string') {
+    const error = new Error('截取结果文件缺失');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return content.result;
+}
+
+async function buildCombinedTopLinesContent(records = []) {
+  const sections = [];
+
+  for (const record of records) {
+    const content = await readTopLinesResult(record);
+    sections.push(`【${record.fileName || '未命名文件'}】\n${content}`);
+  }
+
+  return sections.join('\n\n====================\n\n');
+}
+
+async function deleteTopLinesFilesByIds(ids = []) {
+  const deletingFiles = topLinesFiles.filter(file => ids.includes(file.id));
+  if (!deletingFiles.length) {
+    return [];
+  }
+
+  topLinesFiles = topLinesFiles.filter(file => !ids.includes(file.id));
+  await saveTopLinesFiles();
+
+  await Promise.allSettled(
+    deletingFiles.map(file => {
+      if (!file.resultContentId) {
+        return Promise.resolve();
+      }
+      return deleteTaskContent(TASK_CONTENT_DIR, file.resultContentId);
+    })
+  );
+
+  return deletingFiles;
+}
+
+topLinesFiles = topLinesFiles.map(normalizeTopLinesFileRecord);
 
 function withProjectInfo(task) {
   const project = getProjectById(task.projectId);
@@ -388,6 +765,318 @@ function resolveUploadProject(body) {
 }
 
 // 批量上传并创建任务（必须绑定项目）
+async function processSplitStoryFile(fileId) {
+  const fileRecord = getSplitStoryFileById(fileId);
+  if (!fileRecord) {
+    return null;
+  }
+
+  const startedAt = Date.now();
+  fileRecord.status = 2;
+  fileRecord.statusText = '拆分中，正在查找“第二个故事”';
+  fileRecord.progress = 20;
+  fileRecord.storyCount = 0;
+  fileRecord.storyTitles = [];
+  fileRecord.resultFileNames = [];
+  fileRecord.analysisSummary = '';
+  fileRecord.errorMessage = '';
+  fileRecord.resultTaskIds = [];
+  fileRecord.startedAt = startedAt;
+  fileRecord.endTime = null;
+  fileRecord.updatedAt = startedAt;
+  await saveSplitStoryFiles();
+
+  try {
+    const resolvedPath = resolveUploadPath(fileRecord.filePath);
+    const sourceContent = fs.readFileSync(resolvedPath, 'utf8');
+    fileRecord.originalLength = sourceContent.length;
+
+    const storySegments = buildSplitStorySegments(sourceContent);
+    fileRecord.storyCount = storySegments.length;
+    fileRecord.storyTitles = storySegments.map(segment => segment.title);
+    fileRecord.statusText = `拆分中，当前识别到 ${storySegments.length} 个故事，正在生成文件`;
+    fileRecord.progress = 70;
+    fileRecord.updatedAt = Date.now();
+    await saveSplitStoryFiles();
+
+    const resultTasks = createSplitResultTasks(fileRecord, storySegments);
+    fileRecord.resultTaskIds = resultTasks.map(task => task.id);
+    fileRecord.resultFileNames = resultTasks.map(task => task.fileName);
+    fileRecord.analysisSummary = storySegments.length > 1
+      ? `${fileRecord.resultFileNames.join('、')}`
+      : `${fileRecord.resultFileNames[0] || fileRecord.fileName}`;
+    tasks = [...resultTasks, ...tasks];
+
+    for (let index = 0; index < resultTasks.length; index += 1) {
+      await writeTaskContent(
+        TASK_CONTENT_DIR,
+        resultTasks[index].id,
+        storySegments[index].originalContent
+      );
+    }
+
+    const endTime = Date.now();
+    const processTime = ((endTime - startedAt) / 1000).toFixed(2);
+    resultTasks.forEach(task => {
+      task.processTime = processTime;
+      task.endTime = endTime;
+    });
+
+    fileRecord.status = 1;
+    fileRecord.statusText = storySegments.length > 1
+      ? `拆分完成，已生成 ${storySegments.length} 个文件`
+      : '拆分完成，当前文件只生成 1 个结果文件';
+    fileRecord.progress = 100;
+    fileRecord.endTime = endTime;
+    fileRecord.updatedAt = endTime;
+    fileRecord.errorMessage = '';
+
+    await Promise.all([saveTasks(), saveSplitStoryFiles()]);
+    return withSplitStoryProjectInfo(fileRecord);
+  } catch (error) {
+    const endTime = Date.now();
+    fileRecord.status = 3;
+    fileRecord.statusText = '拆分失败';
+    fileRecord.progress = 0;
+    fileRecord.errorMessage = error.message || '拆分失败';
+    fileRecord.endTime = endTime;
+    fileRecord.updatedAt = endTime;
+    await saveSplitStoryFiles();
+    return withSplitStoryProjectInfo(fileRecord);
+  }
+}
+
+app.get('/split-story/files', (req, res) => {
+  const { projectId } = req.query;
+  let filteredFiles = splitStoryFiles;
+
+  if (projectId && projectId !== 'ALL') {
+    filteredFiles = filteredFiles.filter(item => item.projectId === projectId);
+  }
+
+  filteredFiles = [...filteredFiles].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  res.json({ files: filteredFiles.map(withSplitStoryProjectInfo) });
+});
+
+app.post('/split-story/upload', upload.array('files'), async (req, res) => {
+  if (!Array.isArray(req.files) || req.files.length === 0) {
+    return res.status(400).json({ error: '请至少上传一个 txt 文件' });
+  }
+
+  let selectedProject;
+  try {
+    selectedProject = resolveUploadProject(req.body);
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ error: error.message || '绑定项目失败' });
+  }
+
+  const now = Date.now();
+  const newFiles = req.files.map((file, index) => {
+    const originalContent = fs.readFileSync(file.path, 'utf8');
+
+    return normalizeSplitStoryFileRecord({
+      id: createId('split_story'),
+      fileName: decodeUploadFileName(file.originalname),
+      filePath: file.filename,
+      projectId: selectedProject.id,
+      projectType: selectedProject.type || '',
+      status: 0,
+      statusText: '待拆分',
+      progress: 0,
+      storyCount: 0,
+      storyTitles: [],
+      resultFileNames: [],
+      analysisSummary: '',
+      errorMessage: '',
+      resultTaskIds: [],
+      createdAt: now + index,
+      updatedAt: now + index,
+      startedAt: null,
+      endTime: null,
+      originalLength: originalContent.length
+    });
+  });
+
+  splitStoryFiles = [...newFiles, ...splitStoryFiles];
+  await saveSplitStoryFiles();
+  res.json({ files: newFiles.map(withSplitStoryProjectInfo) });
+});
+
+app.post('/split-story/start', async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!ids.length) {
+    return res.status(400).json({ error: '请选择需要拆分的文件' });
+  }
+
+  const processedFiles = [];
+  const skipped = [];
+
+  for (const id of ids) {
+    const fileRecord = getSplitStoryFileById(id);
+    if (!fileRecord) {
+      skipped.push({ id, reason: '文件不存在' });
+      continue;
+    }
+
+    const processed = await processSplitStoryFile(id);
+    if (processed) {
+      processedFiles.push(processed);
+    }
+  }
+
+  res.json({
+    success: true,
+    files: processedFiles,
+    skipped
+  });
+});
+
+app.post('/split-story/delete', async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!ids.length) {
+    return res.status(400).json({ error: '请选择需要删除的文件' });
+  }
+
+  try {
+    await deleteSplitStoryFilesByIds(ids);
+    res.json({ files: splitStoryFiles.map(withSplitStoryProjectInfo) });
+  } catch (error) {
+    res.status(500).json({ error: '删除拆分文件失败', detail: error.message });
+  }
+});
+
+app.get('/top-lines/files', (req, res) => {
+  const { projectId } = req.query;
+  let filteredFiles = topLinesFiles;
+
+  if (projectId && projectId !== 'ALL') {
+    filteredFiles = filteredFiles.filter(item => item.projectId === projectId);
+  }
+
+  filteredFiles = [...filteredFiles].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  res.json({ files: filteredFiles.map(withTopLinesProjectInfo) });
+});
+
+app.post('/top-lines/upload', upload.array('files'), async (req, res) => {
+  if (!Array.isArray(req.files) || req.files.length === 0) {
+    return res.status(400).json({ error: '请至少上传一个 txt 文件' });
+  }
+
+  let selectedProject = null;
+  const hasProjectBinding =
+    typeof req.body?.projectId === 'string' && req.body.projectId.trim() ||
+    typeof req.body?.newProjectName === 'string' && req.body.newProjectName.trim();
+
+  if (hasProjectBinding) {
+    try {
+      selectedProject = resolveUploadProject(req.body);
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ error: error.message || '绑定项目失败' });
+    }
+  }
+
+  const now = Date.now();
+  const createdFiles = [];
+
+  for (let index = 0; index < req.files.length; index += 1) {
+    const file = req.files[index];
+    const decodedFileName = decodeUploadFileName(file.originalname);
+    const resultContentId = createId('top_lines_result');
+    const record = normalizeTopLinesFileRecord({
+      id: createId('top_lines'),
+      fileName: decodedFileName,
+      filePath: '',
+      projectId: selectedProject?.id || '',
+      projectType: selectedProject?.type || '',
+      status: 1,
+      statusText: '截取完成',
+      resultContentId,
+      resultFileName: buildTopLinesResultFileName(decodedFileName),
+      previewText: '',
+      originalLineCount: 0,
+      extractedLineCount: 0,
+      errorMessage: '',
+      createdAt: now + index,
+      updatedAt: now + index,
+      originalLength: 0
+    });
+
+    try {
+      const sourceContent = fs.readFileSync(file.path, 'utf8');
+      record.originalLength = sourceContent.length;
+      const topLinesResult = buildTopLinesContent(sourceContent);
+      await writeTaskContent(TASK_CONTENT_DIR, resultContentId, topLinesResult.extractedContent);
+      record.previewText = topLinesResult.previewText;
+      record.originalLineCount = topLinesResult.originalLineCount;
+      record.extractedLineCount = topLinesResult.extractedLineCount;
+      record.statusText = `???? ${topLinesResult.extractedLineCount} ?`;
+    } catch (error) {
+      record.status = 3;
+      record.statusText = '????';
+      record.errorMessage = error.message || '????';
+    }
+    createdFiles.push(record);
+  }
+
+  await Promise.allSettled(req.files.map(file => fs.promises.rm(file.path, { force: true })));
+
+  topLinesFiles = [...createdFiles, ...topLinesFiles];
+  await saveTopLinesFiles();
+  res.json({ files: createdFiles.map(withTopLinesProjectInfo) });
+});
+
+app.post('/top-lines/download', async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+
+  if (!ids.length) {
+    return res.status(400).json({ error: '请选择需要下载的文件' });
+  }
+
+  const records = ids
+    .map(id => topLinesFiles.find(item => item.id === id))
+    .filter(record => record && record.status === 1 && record.resultContentId);
+
+  if (!records.length) {
+    return res.status(404).json({ error: '没有可下载的截取结果' });
+  }
+
+  try {
+    let content = '';
+    let fileName = '前20行合并.txt';
+
+    if (records.length === 1) {
+      content = await readTopLinesResult(records[0]);
+      fileName = records[0].fileName || '前20行.txt';
+    } else {
+      content = await buildCombinedTopLinesContent(records);
+    }
+
+    const safeFileName = encodeURIComponent(fileName)
+      .replace(/[\'()]/g, escape)
+      .replace(/\*/g, '%2A');
+
+    res.set('Content-Disposition', `attachment; filename="${safeFileName}"`);
+    res.set('Content-Type', 'text/plain');
+    res.send(content);
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: '下载失败', detail: error.message });
+  }
+});
+
+app.post('/top-lines/delete', async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!ids.length) {
+    return res.status(400).json({ error: '请选择需要删除的文件' });
+  }
+
+  try {
+    await deleteTopLinesFilesByIds(ids);
+    res.json({ files: topLinesFiles.map(withTopLinesProjectInfo) });
+  } catch (error) {
+    res.status(500).json({ error: '删除前20行记录失败', detail: error.message });
+  }
+});
+
 app.post('/tasks/upload', upload.array('files'), async (req, res) => {
   if (!Array.isArray(req.files) || req.files.length === 0) {
     return res.status(400).json({ error: '请至少上传一个 txt 文件' });
@@ -405,7 +1094,7 @@ app.post('/tasks/upload', upload.array('files'), async (req, res) => {
 
     return {
       id: `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
-      fileName: Buffer.from(file.originalname, 'latin1').toString('utf8'),
+      fileName: decodeUploadFileName(file.originalname),
       filePath: file.filename,
       status: 0,
       model: '',

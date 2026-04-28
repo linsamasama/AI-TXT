@@ -2,7 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, message, Modal, Radio, Select } from "antd";
 import { UploadOutlined } from "@ant-design/icons";
 
-export default function UploadButton({ onUpload, projects = [] }) {
+export default function UploadButton({
+  onUpload,
+  projects = [],
+  requireProject = true
+}) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState("existing");
   const [projectId, setProjectId] = useState("");
@@ -10,7 +14,7 @@ export default function UploadButton({ onUpload, projects = [] }) {
   const [uploading, setUploading] = useState(false);
 
   const fileInputRef = useRef(null);
-  const pendingPayloadRef = useRef(null);
+  const pendingPayloadRef = useRef({});
 
   const canUseExistingProject = projects.length > 0;
 
@@ -20,21 +24,35 @@ export default function UploadButton({ onUpload, projects = [] }) {
   );
 
   useEffect(() => {
+    if (!requireProject) {
+      return;
+    }
+
     if (!canUseExistingProject) {
       setMode("new");
       setProjectId("");
       return;
     }
+
     if (!projectId || !projects.some(project => project.id === projectId)) {
       setProjectId(projects[0].id);
     }
-  }, [canUseExistingProject, projectId, projects]);
+  }, [canUseExistingProject, projectId, projects, requireProject]);
 
-  const openDialog = () => {
-    setOpen(true);
+  const openFileDialog = payload => {
+    pendingPayloadRef.current = payload;
+    if (!fileInputRef.current) {
+      throw new Error("文件选择器初始化失败");
+    }
+    fileInputRef.current.value = "";
+    fileInputRef.current.click();
   };
 
   const buildPayload = () => {
+    if (!requireProject) {
+      return {};
+    }
+
     if (mode === "existing") {
       if (!projectId) {
         throw new Error("请先选择项目");
@@ -51,14 +69,22 @@ export default function UploadButton({ onUpload, projects = [] }) {
     };
   };
 
+  const handleButtonClick = () => {
+    if (!requireProject) {
+      try {
+        openFileDialog({});
+      } catch (error) {
+        message.error(error.message || "无法打开文件选择器");
+      }
+      return;
+    }
+
+    setOpen(true);
+  };
+
   const handleChooseFiles = () => {
     try {
-      pendingPayloadRef.current = buildPayload();
-      if (!fileInputRef.current) {
-        throw new Error("文件选择器初始化失败");
-      }
-      fileInputRef.current.value = "";
-      fileInputRef.current.click();
+      openFileDialog(buildPayload());
     } catch (error) {
       message.error(error.message || "上传参数不合法");
     }
@@ -85,7 +111,7 @@ export default function UploadButton({ onUpload, projects = [] }) {
 
   return (
     <>
-      <Button icon={<UploadOutlined />} onClick={openDialog}>
+      <Button icon={<UploadOutlined />} onClick={handleButtonClick}>
         上传 txt 文件
       </Button>
 
@@ -98,49 +124,58 @@ export default function UploadButton({ onUpload, projects = [] }) {
         onChange={handleFileChange}
       />
 
-      <Modal
-        title="上传前绑定项目"
-        open={open}
-        onCancel={() => {
-          if (!uploading) {
-            setOpen(false);
-          }
-        }}
-        onOk={handleChooseFiles}
-        okText={uploading ? "上传中..." : "选择文件并上传"}
-        confirmLoading={uploading}
-        okButtonProps={{ disabled: uploading }}
-        cancelButtonProps={{ disabled: uploading }}
-        destroyOnClose
-      >
-        <div style={{ marginBottom: 12 }}>
-          <Radio.Group
-            value={mode}
-            onChange={event => setMode(event.target.value)}
-            options={[
-              { label: "选择已有项目", value: "existing", disabled: !canUseExistingProject },
-              { label: "创建新项目", value: "new" }
-            ]}
-          />
-        </div>
+      {requireProject ? (
+        <Modal
+          title="上传前绑定项目"
+          open={open}
+          onCancel={() => {
+            if (!uploading) {
+              setOpen(false);
+            }
+          }}
+          onOk={handleChooseFiles}
+          okText={uploading ? "上传中..." : "选择文件并上传"}
+          confirmLoading={uploading}
+          okButtonProps={{ disabled: uploading }}
+          cancelButtonProps={{ disabled: uploading }}
+          destroyOnClose
+        >
+          <div style={{ marginBottom: 12 }}>
+            <Radio.Group
+              value={mode}
+              onChange={event => setMode(event.target.value)}
+              options={[
+                {
+                  label: "选择已有项目",
+                  value: "existing",
+                  disabled: !canUseExistingProject
+                },
+                {
+                  label: "创建新项目",
+                  value: "new"
+                }
+              ]}
+            />
+          </div>
 
-        {mode === "existing" ? (
-          <Select
-            style={{ width: "100%" }}
-            placeholder="请选择项目"
-            options={existingProjectOptions}
-            value={projectId}
-            onChange={setProjectId}
-          />
-        ) : (
-          <Input
-            value={newProjectName}
-            onChange={event => setNewProjectName(event.target.value)}
-            placeholder="请输入新项目名称"
-            maxLength={30}
-          />
-        )}
-      </Modal>
+          {mode === "existing" ? (
+            <Select
+              style={{ width: "100%" }}
+              placeholder="请选择项目"
+              options={existingProjectOptions}
+              value={projectId}
+              onChange={setProjectId}
+            />
+          ) : (
+            <Input
+              value={newProjectName}
+              onChange={event => setNewProjectName(event.target.value)}
+              placeholder="请输入新项目名称"
+              maxLength={30}
+            />
+          )}
+        </Modal>
+      ) : null}
     </>
   );
 }

@@ -15,6 +15,57 @@ export async function uploadFiles(files, projectPayload = {}) {
   const res = await axios.post(`${BASE}/tasks/upload`, form);
   return res.data.tasks;
 }
+export async function uploadSplitStoryFiles(files, projectPayload = {}) {
+  const form = new FormData();
+  files.forEach(file => form.append('files', file));
+  if (projectPayload.projectId) {
+    form.append('projectId', projectPayload.projectId);
+  }
+  if (projectPayload.newProjectName) {
+    form.append('newProjectName', projectPayload.newProjectName);
+  }
+  const res = await axios.post(`${BASE}/split-story/upload`, form);
+  return res.data.files;
+}
+export async function getSplitStoryFiles(params = {}) {
+  const res = await axios.get(`${BASE}/split-story/files`, { params });
+  return res.data.files;
+}
+export async function startSplitStoryFiles(ids) {
+  const res = await axios.post(`${BASE}/split-story/start`, { ids });
+  return res.data;
+}
+export async function deleteSplitStoryFiles(ids) {
+  const res = await axios.post(`${BASE}/split-story/delete`, { ids });
+  return res.data.files;
+}
+export async function uploadTopLinesFiles(files, projectPayload = {}) {
+  const form = new FormData();
+  files.forEach(file => form.append('files', file));
+  if (projectPayload.projectId) {
+    form.append('projectId', projectPayload.projectId);
+  }
+  if (projectPayload.newProjectName) {
+    form.append('newProjectName', projectPayload.newProjectName);
+  }
+  const res = await axios.post(`${BASE}/top-lines/upload`, form);
+  return res.data.files;
+}
+export async function getTopLinesFiles(params = {}) {
+  const res = await axios.get(`${BASE}/top-lines/files`, { params });
+  return res.data.files;
+}
+export async function downloadTopLinesFiles(ids, zipFileName) {
+  return await axios.post(
+    `${BASE}/top-lines/download`,
+    { ids, zipFileName },
+    { responseType: 'blob' }
+  );
+}
+export async function deleteTopLinesFiles(ids) {
+  const res = await axios.post(`${BASE}/top-lines/delete`, { ids });
+  return res.data.files;
+}
 export async function getTasks(params = {}) {
   const res = await axios.get(`${BASE}/tasks`, { params });
   return res.data.tasks;

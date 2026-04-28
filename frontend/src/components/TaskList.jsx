@@ -120,6 +120,30 @@ export default function TaskList() {
     setAiConfigOpen(false);
   };
 
+  const applyTaskRunResults = useCallback(taskResults => {
+    if (!Array.isArray(taskResults) || !taskResults.length) {
+      return;
+    }
+
+    const resultMap = new Map(taskResults.map(item => [item.id, item]));
+    setTasks(current =>
+      current.map(task => {
+        const result = resultMap.get(task.id);
+        if (!result) {
+          return task;
+        }
+
+        return {
+          ...task,
+          status: result.status ?? task.status,
+          endTime: result.endTime ?? task.endTime,
+          processTime: result.processTime ?? task.processTime,
+          errorMessage: result.errorMessage ?? ""
+        };
+      })
+    );
+  }, []);
+
   const handleStart = async ids => {
     if (!ids.length) {
       messageApi.warning("请先选择任务");
@@ -143,7 +167,8 @@ export default function TaskList() {
 
     const runSingleTask = async taskId => {
       try {
-        await startTasks({ ids: [taskId] });
+        const response = await startTasks({ ids: [taskId] });
+        applyTaskRunResults(response?.running);
       } catch (error) {
         console.log(error);
       } finally {
